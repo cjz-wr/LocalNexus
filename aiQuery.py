@@ -42,7 +42,6 @@ class AiQuery:
         query_parts = keywords + entities
         text_query = " ".join(query_parts) if query_parts else None
 
-        # 同步数据库查询放入线程池
         memories = await asyncio.to_thread(
             store.query_memories,
             root_category=root_category,
@@ -75,7 +74,8 @@ class AiQuery:
         if search_result:
             self.memory.append({"role": "user", "content": search_result})
 
-        # 异步调用大模型
+        # 第二次调用大模型生成最终回复
+        print("[DEBUG] 第二次调用大模型生成最终回复...")
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=self.memory,
@@ -83,6 +83,7 @@ class AiQuery:
             temperature=0.7
         )
         assistant_reply = response.choices[0].message.content
+        print(f"[DEBUG] 第二次调用回复内容: {assistant_reply}")
 
         self.memory[0]["content"] = self.old_system
         self.memory.append({"role": "assistant", "content": assistant_reply})

@@ -10,7 +10,10 @@ from RefineMemory import RefineMemory
 
 class DialogueManager:
     def __init__(self):
-        self.key = "sk-32b922c6ed4c479f964e81b8339e56d2"
+        #临时性的修改
+        with open("key.txt",'r',encoding='utf-8') as f:
+            self.key = f.read().strip()
+        
         self.model = "qwen3-max-2026-01-23"
         self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         self.client = AsyncOpenAI(api_key=self.key, base_url=self.base_url)
@@ -21,7 +24,6 @@ class DialogueManager:
             "content": self.ai_system
         }]
 
-        # 对token的处理
         self.max_tokens = CalculateToken().getMaxTokens(self.model)
         if self.max_tokens == 0:
             while True:
@@ -32,6 +34,7 @@ class DialogueManager:
 
         self.limit_tokens = self.max_tokens * 0.75
         self.del_memory_tokens = self.max_tokens * 0.9
+        self._refining = False  # 防止重复提炼的标志
 
         if not os.path.isdir("ai_memory"):
             os.mkdir("ai_memory")
@@ -73,17 +76,25 @@ class DialogueManager:
         pattern = r'<query>(.*?)</query>'
         match = re.search(pattern, full_response, re.DOTALL)
         if match:
+            print("\n[系统] 检测到记忆查询请求，正在处理...")
             get = AiQuery(self.key, self.model, self.base_url, full_response, self.prompt)
-            self.prompt, respon = await get.returnAiResponse()
+            self.prompt, final_reply = await get.returnAiResponse()
+            if final_reply:
+                print("\n" + final_reply)  # 明确打印最终回复
+            else:
+                print("\n[警告] 最终回复为空")
+            self.response_message = {"role": "assistant", "content": final_reply}
+            completion_tokens = CalculateToken.num_tokens_from_messages([self.response_message], self.model)
+            print(f"\n[最终回复 tokens]: {completion_tokens}")
+        else:
+            if usage:
+                completion_tokens = usage.completion_tokens
+                print(f"\n[Token usage] 回复 tokens: {completion_tokens}")
+            else:
+                completion_tokens = CalculateToken.num_tokens_from_messages([self.response_message], self.model)
+                print(f"\n[手动估算] 回复 tokens: {completion_tokens}")
 
         print("-" * 50)
-
-        if usage:
-            completion_tokens = usage.completion_tokens
-            print(f"\n[Token usage] 回复 tokens: {completion_tokens}")
-        else:
-            completion_tokens = CalculateToken.num_tokens_from_messages([self.response_message], self.model)
-            print(f"\n[手动估算] 回复 tokens: {completion_tokens}")
 
         self.all_tokens += completion_tokens
         print(f"当前总 token 数: {self.all_tokens}")
@@ -92,16 +103,16 @@ class DialogueManager:
         print(f"还剩 {self.del_token} 个 token 可以使用。")
         print("-" * 50)
 
-        # 优化记忆的入口
-        if self.have_tokens <= 0:
+        # 触发记忆提炼（防止重复触发）
+        if self.have_tokens <= 0 and not self._refining:
+            self._refining = True
             await self._refine_memory_async()
+            self._refining = False
 
-        # 删除记忆的窗口
         if self.del_token <= 0:
             for i in range(1, int(len(self.prompt) * 0.3)):
                 self.prompt.pop(i)
 
-        # 保存记忆到文件（放入线程池）
         await asyncio.to_thread(self._save_history)
 
     def _save_history(self):
@@ -109,12 +120,15 @@ class DialogueManager:
             json.dump(self.prompt, ensure_ascii=False, indent=4, fp=f)
 
     async def _refine_memory_async(self):
-        new_prompt = self.prompt[1:]  # 去掉系统提示
+        new_prompt = self.prompt[1:]
         dialog_ids = [str(uuid.uuid4()) for _ in range(len(new_prompt))]
         cleaner = RefineMemory(new_prompt, user_id="localnexus", min_chars=3)
         memories = await cleaner.getFromOpenAI(self.key, self.model, self.base_url, dialog_ids=dialog_ids)
         if memories:
-            await asyncio.to_thread(cleaner.sendPromptToAi)
+            try:
+                await asyncio.to_thread(cleaner.sendPromptToAi)
+            except Exception as e:
+                print(f"❌ sendPromptToAi 失败: {e}")
 
     async def run(self):
         while True:
