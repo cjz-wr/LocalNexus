@@ -7,7 +7,7 @@ A privacy-first AI memory architecture for local deployment. Features a unique "
 > 根植本地，智联无限。
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)]()
 
 **LocalNexus** 是一个轻量级、隐私优先的 **AI 记忆管理架构**，专为本地部署设计，同时利用云端大模型的强大智能。
