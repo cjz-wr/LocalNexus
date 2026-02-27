@@ -1,37 +1,24 @@
 import json
+import asyncio
 import openai
 import re
 import emoji
 from typing import Optional, List, Dict, Any
-from openai import OpenAI
+from openai import AsyncOpenAI
 from treeMemoryStore import TreeMemoryStore
 import os
+
 class RefineMemory:
     def __init__(self, ai_memory, user_id="localnexus", min_chars: int = 3, preserve_code_blocks: bool = True):
-        """
-        :param ai_memory: 原始对话列表，每个元素包含 role 和 content
-        :param store: TreeMemoryStore 实例，用于存储提炼后的记忆
-        :param min_chars: 最小字符数
-        :param preserve_code_blocks: 是否保留代码块
-        """
-        # 移除系统提示词（通常不会出现在 ai_memory 中，但为安全起见）
         self.ai_memory = [msg for msg in ai_memory if msg["role"] != "system"]
-        self.store =TreeMemoryStore(user_id)
+        self.store = TreeMemoryStore(user_id)
         self.min_chars = min_chars
         self.preserve_code_blocks = preserve_code_blocks
-
-        # 一个完善的 URL 匹配正则
         self.url_pattern = re.compile(r'https?://[^\s]+|www\.[^\s]+')
-
         self.frist_creat = False
-
-
-        #用于判断知识库是否是第一次生成的
         if os.path.isdir("storage"):
             self.frist_creat = True
 
-
-        # 优化的 AI 提示词，确保输出严格符合存储结构
         self.ai_prompt = """
 # Role
 You are an expert Memory Architect for a personal AI assistant named "LocalNexus". 
@@ -84,13 +71,10 @@ Classify the conversation into ONE of the following root categories:
 """
 
     def localClean(self, text: str) -> Optional[str]:
-        """清洗单条消息文本，保留有效内容，移除噪音"""
         if not text or not isinstance(text, str):
             return None
 
         code_blocks = []
-
-        # 保护代码块，防止换行符被抹平
         if self.preserve_code_blocks:
             pattern = r'(```(?:\w*)?\n.*?\n```|`[^`]+`)'
             matches = list(re.finditer(pattern, text, re.DOTALL))
@@ -99,28 +83,21 @@ Classify the conversation into ONE of the following root categories:
                 code_blocks.append(match.group(0))
                 text = text[:match.start()] + placeholder + text[match.end():]
 
-        # 基础清洗：合并多余空格
         text = re.sub(r'[ \t]+', ' ', text)
         text = text.strip()
 
-        # 计算有效字符长度（忽略占位符）
         effective_text = re.sub(r'__CODE_BLOCK_\d+__', '', text)
         if len(effective_text.replace(' ', '')) < self.min_chars:
             return None
 
-        # 删除末尾 emoji
         text = self.remove_trailing_emoji(text)
-
-        # 将剩余 emoji 转为文字描述
         try:
             text = emoji.demojize(text, delimiters=(":", ":"))
         except Exception:
             pass
 
-        # 替换 URL 为标记
         text = self.url_pattern.sub('[URL]', text)
 
-        # 还原代码块
         if self.preserve_code_blocks:
             for i, block in enumerate(code_blocks):
                 placeholder = f"__CODE_BLOCK_{i}__"
@@ -130,7 +107,6 @@ Classify the conversation into ONE of the following root categories:
 
     @staticmethod
     def remove_trailing_emoji(text: str) -> str:
-        """移除字符串末尾的 emoji 字符"""
         if not text:
             return text
         temp_text = text.rstrip()
@@ -149,7 +125,6 @@ Classify the conversation into ONE of the following root categories:
         return temp_text
 
     def startLocalClean(self) -> List[Dict[str, Any]]:
-        """清洗所有消息，返回清理后的消息列表"""
         cleaned_messages = []
         for message in self.ai_memory:
             cleaned_content = self.localClean(message["content"])
@@ -158,27 +133,16 @@ Classify the conversation into ONE of the following root categories:
         return cleaned_messages
 
     def processLocalCleanData(self) -> str:
-        """将清洗后的消息拼接成适合 LLM 输入的文本"""
         cleaned_messages = self.startLocalClean()
         data = ''
         for msg in cleaned_messages:
             data += f"{msg['role']}: {msg['content']}\n"
         return data
 
-    def getFromOpenAI(self, key, model, url, data=None, dialog_ids: Optional[List[str]] = None):
-        """
-        调用 OpenAI 兼容接口提炼记忆，并自动存入记忆库
-        :param key: API Key
-        :param model: 模型名称
-        :param url: API 地址
-        :param data: 可选，若未提供则使用清洗后的对话数据
-        :param dialog_ids: 当前对话轮次对应的对话ID列表，用于关联记忆
-        :return: 解析后的记忆列表（如果存储成功）或 None
-        """
+    async def getFromOpenAI(self, key, model, url, data=None, dialog_ids: Optional[List[str]] = None):
         if data is None:
             data = self.processLocalCleanData()
 
-        # 如果清洗后无有效内容，直接返回
         if not data.strip():
             print("⚠️ 清洗后无有效对话内容，跳过提炼。")
             return None
@@ -188,9 +152,9 @@ Classify the conversation into ONE of the following root categories:
             {"role": "user", "content": data},
         ]
 
-        ai_client = OpenAI(api_key=key, base_url=url)
+        ai_client = AsyncOpenAI(api_key=key, base_url=url)
         try:
-            ai_response = ai_client.chat.completions.create(
+            ai_response = await ai_client.chat.completions.create(
                 model=model,
                 messages=ai_msg,
                 stream=False,
@@ -201,10 +165,8 @@ Classify the conversation into ONE of the following root categories:
             print(f"❌ LLM 调用失败: {e}")
             return None
 
-        # 解析 JSON
         try:
             memories = json.loads(response)
-            # 确保是列表
             if isinstance(memories, dict):
                 memories = [memories]
             elif not isinstance(memories, list):
@@ -215,21 +177,19 @@ Classify the conversation into ONE of the following root categories:
             print(f"AI 返回原始内容: {response}")
             return None
 
-        # 如果有关联的存储实例，自动存入
         if self.store and memories:
-            # 每个记忆都关联相同的 dialog_ids（因为提炼自同一段对话）
             dialog_ids_list = [dialog_ids for _ in memories] if dialog_ids else None
-            self.store.add_memories(memories, dialog_ids_list)
+            # 同步存储放入线程池
+            await asyncio.to_thread(self.store.add_memories, memories, dialog_ids_list)
             print(f"✅ 成功存入 {len(memories)} 条记忆到存储库。")
         else:
             print("⚠️ 未提供记忆存储实例，仅返回解析结果。")
 
         return memories
-    
-    #用于后面的优化
+
+    # 用于后面的优化（同步方法，可能包含文件操作）
     def sendPromptToAi(self):
         if self.frist_creat:
-            
             system_prompt = '''
              ## 记忆查询工具
                     当用户的问题需要参考历史记忆才能准确回答时，你必须输出一个 JSON 格式的查询请求。JSON 必须包含以下字段：
@@ -264,17 +224,12 @@ Classify the conversation into ONE of the following root categories:
                     注意：如果不需要查询记忆，直接正常回答即可，不要输出查询标记。
 
             '''
-            with open("ai_memory/chat_history.json", "r") as f:
+            with open("ai_memory/chat_history.json", "r",encoding="utf-8") as f:
                 self.ai_memory = json.load(f)
-                self.ai_memory[0]["content"] = self.ai_memory[0]["content"]+system_prompt
+                self.ai_memory[0]["content"] = self.ai_memory[0]["content"] + system_prompt
 
-
-
-    
-
-
-def main_local():
-    # --- 测试数据 ---
+# 测试函数（如需异步调用，可改为 async def）
+async def main_local():
     raw_messages = [
         {"role": "user", "content": "你好，我想问一下如何用FastAPI实现JWT认证？"},
         {"role": "assistant", "content": "可以的，你需要安装`python-jose`和`passlib`。\n\n文档在这里：https://fastapi.tiangolo.com/tutorial/security/"},
@@ -288,25 +243,20 @@ def main_local():
         {"role": "assistant", "content": "那你检查一下密钥是否正确。还有，确保token没有过期。"},
         {"role": "user", "content": "解决了😊 原来是密钥写错了，谢谢！"},
         {"role": "assistant", "content": "不客气😊"},
-        {"role": "user", "content": "👍👍👍"},  # 全 Emoji
-        {"role": "user", "content": "访问 www.google.com 看看"},  # www 链接
+        {"role": "user", "content": "👍👍👍"},
+        {"role": "user", "content": "访问 www.google.com 看看"},
     ]
 
-    # --- 初始化记忆存储（模拟）---
-    # 实际使用时需要导入 TreeMemoryStore
     from treeMemoryStore import TreeMemoryStore
     store = TreeMemoryStore("demo_user")
     print("🚀 存储初始化完成。")
-    # 假设这段对话对应的对话 ID 列表（实际应该从对话流水表获取）
-    # 这里演示时随机生成几个ID
     import uuid
     dialog_ids = [str(uuid.uuid4()) for _ in range(len(raw_messages))]
 
-    # --- 执行提炼与存储 ---
     cleaner = RefineMemory(raw_messages, store=store, min_chars=3)
-    memories = cleaner.getFromOpenAI(
-        key="sk-32b922c6ed4c479f964e81b8339e56d2",          # 请替换为实际密钥
-        model="qwen3-max-2026-01-23",        # 或实际使用的模型
+    memories = await cleaner.getFromOpenAI(
+        key="sk-32b922c6ed4c479f964e81b8339e56d2",
+        model="qwen3-max-2026-01-23",
         url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         dialog_ids=dialog_ids
     )
@@ -316,12 +266,10 @@ def main_local():
         print("\n📦 提炼出的记忆：")
         print(json.dumps(memories, ensure_ascii=False, indent=2))
 
-    # --- 验证存储结果（可选）---
     print("\n🔍 从记忆库中查询 Tech 类别的记忆：")
-    tech_mems = store.query_memories(root_category="Tech", level=2)
+    tech_mems = await asyncio.to_thread(store.query_memories, root_category="Tech", level=2)
     for mem in tech_mems:
         print(f"  - {mem['title']} (关联对话数: {len(mem.get('dialog_ids', []))})")
 
-
 if __name__ == "__main__":
-    main_local()
+    asyncio.run(main_local())
