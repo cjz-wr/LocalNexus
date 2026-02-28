@@ -1,7 +1,6 @@
 .vscode
 ai_memory
 hf_cache
-model_token
 storage
 __pycache__
 ai处理数据后返回demo.json

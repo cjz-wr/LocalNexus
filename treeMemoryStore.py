@@ -9,6 +9,7 @@ import uuid
 import time
 import sqlite3
 import pyarrow as pa
+import numpy as np
 from typing import List, Dict, Optional, Any
 from sentence_transformers import SentenceTransformer
 
@@ -48,7 +49,8 @@ class TreeMemoryStore:
         self._init_root_categories()
 
     def _init_root_categories(self):
-        roots = ["Work", "Tech", "Learning", "Health", "Finance", "Ideas", "Life", "General"]
+        # 新增 UserInfo 类别
+        roots = ["Work", "Tech", "Learning", "Health", "Finance", "Ideas", "Life", "General", "UserInfo"]
         for cat in roots:
             exists = self.table.search().where(f"root_category = '{cat}' AND level = 0").limit(1).to_list()
             if not exists:
@@ -127,17 +129,17 @@ class TreeMemoryStore:
 
             if search_result:
                 existing = search_result[0]
+                # 移除 LanceDB 自动添加的元数据字段（如 _distance）
+                existing = {k: v for k, v in existing.items() if not k.startswith('_')}
                 similarity = self._cosine_similarity(new_vector, existing['vector'])
                 if similarity >= SIMILARITY_THRESHOLD:
                     # 重复记忆：合并 dialog_ids
                     merged_ids = list(set(existing['dialog_ids'] + new_dialog_ids))
                     print(f"  🔁 发现重复记忆 [{root_cat}] {title}，合并 dialog_ids（共 {len(merged_ids)} 条）")
-                    # 更新现有记录：删除旧记录，插入新记录（保持 id 不变或生成新 ID）
+                    # 更新现有记录：删除旧记录，插入新记录
                     self.table.delete(f"id = '{existing['id']}'")
                     updated_record = existing.copy()
                     updated_record['dialog_ids'] = merged_ids
-                    # 可选：更新向量（如果希望用新摘要重新编码，但通常不变）
-                    # updated_record['vector'] = new_vector
                     self.table.add([updated_record])
                     continue
 
@@ -165,12 +167,11 @@ class TreeMemoryStore:
             except Exception as e:
                 print(f"  ❌ 存入失败: {item.get('title')} - Error: {e}")
 
-def _cosine_similarity(self, vec_a, vec_b):
-    """计算余弦相似度"""
-    import numpy as np
-    a = np.array(vec_a)
-    b = np.array(vec_b)
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    def _cosine_similarity(self, vec_a, vec_b):
+        """计算余弦相似度"""
+        a = np.array(vec_a)
+        b = np.array(vec_b)
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
     def query_memories(self,
                        root_category: Optional[str] = None,

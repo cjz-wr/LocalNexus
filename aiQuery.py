@@ -18,7 +18,8 @@ class AiQuery:
         )
 
     async def handle_memory_query(self, ai_response: str, store: TreeMemoryStore) -> Optional[str]:
-        pattern = r'<query>(.*?)</query>'
+        # pattern = r'<query>(.*?)</query>'
+        pattern = r'<(?:query|\|tool_call_start\|)>(.*?)</(?:query|\|tool_call_end\|)>' #预防一些模型自动输出特定格式
         match = re.search(pattern, ai_response, re.DOTALL)
         if not match:
             return None

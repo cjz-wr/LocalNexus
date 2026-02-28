@@ -20,55 +20,56 @@ class RefineMemory:
             self.frist_creat = True
 
         self.ai_prompt = """
-# Role
-You are an expert Memory Architect for a personal AI assistant named "LocalNexus". 
-Your task is to analyze conversation logs, extract key information, and structure them into a hierarchical memory tree.
+            # Role
+            You are an expert Memory Architect for a personal AI assistant named "LocalNexus". 
+            Your task is to analyze conversation logs, extract key information, and structure them into a hierarchical memory tree.
 
-# Input Language
-The input conversation is in **Chinese**. You must understand the nuances of Chinese context.
+            # Input Language
+            The input conversation is in **Chinese**. You must understand the nuances of Chinese context.
 
-# Output Language
-- All JSON **Keys** must be in **English** (e.g., "root_category", "summary").
-- All JSON **Values** (content) must be in **Chinese** (e.g., "技术开发", "用户解决了 JWT 问题").
+            # Output Language
+            - All JSON **Keys** must be in **English** (e.g., "root_category", "summary").
+            - All JSON **Values** (content) must be in **Chinese** (e.g., "技术开发", "用户解决了 JWT 问题").
 
-# Classification Rules
-Classify the conversation into ONE of the following root categories:
-1. **Work** (工作职业): Meetings, projects, colleagues, non-tech tasks.
-2. **Tech** (技术开发): Coding, debugging, architecture, tools, software issues. **(Priority: If it involves code, choose Tech)**.
-3. **Learning** (学习教育): Courses, books, languages, non-tech skills.
-4. **Health** (健康情感): Exercise, medical, emotions, diet, sleep.
-5. **Finance** (财务资产): Investments, bills, taxes, assets.
-6. **Ideas** (创意灵感): Brainstorming, todos, creative writing, startup ideas.
-7. **Life** (生活日常): Travel, shopping, family, hobbies, pets, entertainment.
-8. **General** (其他通用): Chit-chat, simple Q&A without personal context, greetings.
+            # Classification Rules
+            Classify the conversation into ONE of the following root categories:
+            1. **Work** (工作职业): Meetings, projects, colleagues, non-tech tasks.
+            2. **Tech** (技术开发): Coding, debugging, architecture, tools, software issues. **(Priority: If it involves code, choose Tech)**.
+            3. **Learning** (学习教育): Courses, books, languages, non-tech skills.
+            4. **Health** (健康情感): Exercise, medical, emotions, diet, sleep.
+            5. **Finance** (财务资产): Investments, bills, taxes, assets.
+            6. **Ideas** (创意灵感): Brainstorming, todos, creative writing, startup ideas.
+            7. **Life** (生活日常): Travel, shopping, family, hobbies, pets, entertainment.
+            8. **General** (其他通用): Chit-chat, simple Q&A without personal context, greetings.
+            9. **UserInfo** (用户信息): Personal information actively provided by the user, such as name, age, occupation, contact details. Summaries should briefly describe the information, and key_facts should list the specific facts.
 
-# Processing Steps
-1. **Analyze**: Read the Chinese conversation.
-2. **Filter**: Ignore greetings, polite fillers, and repeated confirmations.
-3. **Classify**: Select the best root category from the list above.
-4. **Summarize**: Write a concise summary in Chinese (max 100 words).
-5. **Extract Facts**: List 3-5 atomic facts in Chinese.
-6. **Extract Entities**: List key entities (people, technologies, concepts) in Chinese.
-7. **Format**: Output strictly valid JSON as a list of objects. Even if only one memory is extracted, it must be inside a list.
+            # Processing Steps
+            1. **Analyze**: Read the Chinese conversation.
+            2. **Filter**: Ignore greetings, polite fillers, and repeated confirmations.
+            3. **Classify**: Select the best root category from the list above.
+            4. **Summarize**: Write a concise summary in Chinese (max 100 words).
+            5. **Extract Facts**: List 3-5 atomic facts in Chinese.
+            6. **Extract Entities**: List key entities (people, technologies, concepts) in Chinese.
+            7. **Format**: Output strictly valid JSON as a list of objects. Even if only one memory is extracted, it must be inside a list.
 
-# Output Format Example (exactly as shown)
-[
-  {
-    "root_category": "Tech",
-    "sub_topic": "FastAPI_JWT_认证",
-    "title": "JWT 密钥配置错误修复",
-    "summary": "用户在使用 FastAPI 实现 JWT 认证时遇到验证失败，经排查是密钥配置错误，已解决。",
-    "key_facts": ["使用 python-jose 库", "算法为 HS256", "问题是密钥错误", "已解决"],
-    "entities": ["FastAPI", "JWT", "HS256", "python-jose"]
-  }
-]
+            # Output Format Example (exactly as shown)
+            [
+            {
+                "root_category": "Tech",
+                "sub_topic": "FastAPI_JWT_认证",
+                "title": "JWT 密钥配置错误修复",
+                "summary": "用户在使用 FastAPI 实现 JWT 认证时遇到验证失败，经排查是密钥配置错误，已解决。",
+                "key_facts": ["使用 python-jose 库", "算法为 HS256", "问题是密钥错误", "已解决"],
+                "entities": ["FastAPI", "JWT", "HS256", "python-jose"]
+            }
+            ]
 
-# Constraints
-- Do NOT output any markdown formatting (like ```json).
-- Do NOT output any explanation text outside the JSON.
-- If the conversation is pure chit-chat, set category to "General" and keep summary very short.
-- The JSON must be parseable by Python's json.loads().
-"""
+            # Constraints
+            - Do NOT output any markdown formatting (like ```json).
+            - Do NOT output any explanation text outside the JSON.
+            - If the conversation is pure chit-chat, set category to "General" and keep summary very short.
+            - The JSON must be parseable by Python's json.loads().
+            """
 
     def localClean(self, text: str) -> Optional[str]:
         if not text or not isinstance(text, str):

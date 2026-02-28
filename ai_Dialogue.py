@@ -20,7 +20,7 @@ class DialogueManager:
         self.model2 = "liquid/lfm2-24b-a2b"
         self.base_url2 = "http://127.0.0.1:1234/v1"
         self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        self.client = AsyncOpenAI(api_key=self.key, base_url=self.base_url2)
+        self.client = AsyncOpenAI(api_key=self.key, base_url=self.base_url)
         self.ai_system = '''你是一个有用的助手.'''
 
         self.prompt = [{
@@ -38,7 +38,7 @@ class DialogueManager:
 
         # self.limit_tokens = self.max_tokens * 0.75
         #阈值通过用户修改为特定值，通多token的累加来判断，是否需要触发精炼
-        self.limit_tokens = 1000
+        self.limit_tokens = 100
         self.st_limit_tokens = 0 #用于检测
 
         self.del_memory_tokens = self.max_tokens * 0.9
@@ -66,7 +66,7 @@ class DialogueManager:
     async def steamChat(self, message):
         self.prompt.append({"role": "user", "content": message})
         stream = await self.client.chat.completions.create(
-            model=self.model2,
+            model=self.model,
             messages=self.prompt,
             stream=True,
             temperature=0.7
@@ -84,7 +84,8 @@ class DialogueManager:
         self.response_message = {"role": "assistant", "content": full_response}
         self.prompt.append(self.response_message)
 
-        pattern = r'<query>(.*?)</query>'
+        # pattern = r'<query>(.*?)</query>'
+        pattern = r'<(?:query|\|tool_call_start\|)>(.*?)</(?:query|\|tool_call_end\|)>'
         match = re.search(pattern, full_response, re.DOTALL)
         if match:
             print("\n[系统] 检测到记忆查询请求，正在处理...")
