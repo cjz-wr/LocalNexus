@@ -96,28 +96,57 @@ class TreeMemoryStore:
 
     def add_memories(self, data_list: List[Dict[str, Any]], dialog_ids_list: Optional[List[List[str]]] = None):
         """
-        添加记忆节点（level=2），可关联对话ID列表
+        添加记忆节点（level=2），并自动去重（基于向量相似度）
         :param data_list: 记忆数据列表
-        :param dialog_ids_list: 与 data_list 对应的对话ID列表，长度必须一致；若为 None 则所有记忆的 dialog_ids 为空
+        :param dialog_ids_list: 与 data_list 对应的对话ID列表，长度必须一致
         """
         print(f"📥 开始存入 {len(data_list)} 条记忆...")
         if dialog_ids_list is None:
             dialog_ids_list = [[] for _ in data_list]
         assert len(data_list) == len(dialog_ids_list), "data_list 与 dialog_ids_list 长度必须一致"
 
-        for item, dialog_ids in zip(data_list, dialog_ids_list):
+        # 相似度阈值
+        SIMILARITY_THRESHOLD = 0.95
+
+        for item, new_dialog_ids in zip(data_list, dialog_ids_list):
             root_cat = item.get('root_category', 'General')
             sub_topic = item.get('sub_topic', 'General')
             title = item.get('title', 'Untitled')
             summary = item.get('summary', '')
             facts = item.get('key_facts', [])
             entities = item.get('entities', [])
+
+            # 计算新记忆的向量（基于摘要）
+            new_vector = embedding_model.encode(summary).tolist()
+
+            # 在相同 root_category 下搜索最相似的记忆（仅 level=2 的叶子节点）
+            search_result = self.table.search(new_vector) \
+                .where(f"root_category = '{root_cat}' AND level = 2") \
+                .limit(1) \
+                .to_list()
+
+            if search_result:
+                existing = search_result[0]
+                similarity = self._cosine_similarity(new_vector, existing['vector'])
+                if similarity >= SIMILARITY_THRESHOLD:
+                    # 重复记忆：合并 dialog_ids
+                    merged_ids = list(set(existing['dialog_ids'] + new_dialog_ids))
+                    print(f"  🔁 发现重复记忆 [{root_cat}] {title}，合并 dialog_ids（共 {len(merged_ids)} 条）")
+                    # 更新现有记录：删除旧记录，插入新记录（保持 id 不变或生成新 ID）
+                    self.table.delete(f"id = '{existing['id']}'")
+                    updated_record = existing.copy()
+                    updated_record['dialog_ids'] = merged_ids
+                    # 可选：更新向量（如果希望用新摘要重新编码，但通常不变）
+                    # updated_record['vector'] = new_vector
+                    self.table.add([updated_record])
+                    continue
+
+            # 无重复，正常插入新记忆
             try:
                 root_node = self.table.search().where(f"root_category = '{root_cat}' AND level = 0").limit(1).to_list()
                 root_id = root_node[0]['id'] if root_node else None
                 branch_id = self._get_or_create_node(root_cat, sub_topic, root_id, level=1)
                 leaf_id = str(uuid.uuid4())
-                vector = embedding_model.encode(summary).tolist()
                 self.table.add([{
                     "id": leaf_id,
                     "parent_id": branch_id,
@@ -126,15 +155,22 @@ class TreeMemoryStore:
                     "sub_topic": sub_topic,
                     "title": title,
                     "summary": summary,
-                    "vector": vector,
+                    "vector": new_vector,
                     "key_facts": facts,
                     "entities": entities,
-                    "dialog_ids": dialog_ids,  # 存储关联的对话ID
+                    "dialog_ids": new_dialog_ids,
                     "created_at": int(time.time())
                 }])
-                print(f"  ✅ 存入: [{root_cat}] -> {sub_topic} -> {title} (关联 {len(dialog_ids)} 条对话)")
+                print(f"  ✅ 存入: [{root_cat}] -> {sub_topic} -> {title} (关联 {len(new_dialog_ids)} 条对话)")
             except Exception as e:
                 print(f"  ❌ 存入失败: {item.get('title')} - Error: {e}")
+
+def _cosine_similarity(self, vec_a, vec_b):
+    """计算余弦相似度"""
+    import numpy as np
+    a = np.array(vec_a)
+    b = np.array(vec_b)
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
     def query_memories(self,
                        root_category: Optional[str] = None,
