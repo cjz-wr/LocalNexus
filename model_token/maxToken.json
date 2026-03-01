@@ -54,5 +54,7 @@
   {"model_name": "Alibaba Qwen-Plus", "max_context_tokens": 1000000},
   {"model_name": "Alibaba Qwen-Flash", "max_context_tokens": 1000000},
   {"model_name": "Alibaba Qwen-Coder", "max_context_tokens": 1000000},
-  {"model_name": "liquid/lfm2-24b-a2b", "max_context_tokens": 62052}
+  {"model_name": "liquid/lfm2-24b-a2b", "max_context_tokens": 2000},
+  {"model_name": "qwen/qwen3-vl-4b", "max_context_tokens": 2000},
+  {"model_name": "qwq-lcot-3b-instruct", "max_context_tokens": 2000}
 ]

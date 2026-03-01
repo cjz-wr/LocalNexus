@@ -16,6 +16,19 @@ from sentence_transformers import SentenceTransformer
 embedding_model = SentenceTransformer('BAAI/bge-m3')
 
 class TreeMemoryStore:
+    # 类别相似度阈值（可调整）
+    CATEGORY_THRESHOLDS = {
+        'Tech': 0.85,
+        'Work': 0.85,
+        'Learning': 0.8,
+        'Health': 0.8,
+        'Finance': 0.85,
+        'Ideas': 0.75,
+        'Life': 0.75,
+        'General': 0.7,
+        'UserInfo': 0.9
+    }
+
     def __init__(self, user_id: str, db_path: str = "./storage"):
         self.user_id = user_id
         # LanceDB 存储路径（记忆树）
@@ -96,9 +109,47 @@ class TreeMemoryStore:
         }])
         return node_id
 
+    def _cosine_similarity(self, vec_a, vec_b):
+        """计算余弦相似度"""
+        a = np.array(vec_a)
+        b = np.array(vec_b)
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+    def _calculate_similarity(self, new_mem: Dict, existing_mem: Dict, root_category: str = None) -> float:
+        """
+        计算新记忆与现有记忆的综合相似度
+        :param new_mem: 新记忆字典，必须包含 'vector', 'key_facts', 'entities'
+        :param existing_mem: 现有记忆字典
+        :param root_category: 根类别，用于动态调整权重
+        :return: 相似度得分 (0~1)
+        """
+        # 向量余弦相似度
+        vec_sim = self._cosine_similarity(new_mem['vector'], existing_mem['vector'])
+
+        # 关键事实 Jaccard 相似度
+        facts_new = set(new_mem.get('key_facts', []))
+        facts_exist = set(existing_mem.get('key_facts', []))
+        facts_jaccard = len(facts_new & facts_exist) / max(len(facts_new | facts_exist), 1)
+
+        # 实体 Jaccard 相似度
+        entities_new = set(new_mem.get('entities', []))
+        entities_exist = set(existing_mem.get('entities', []))
+        entities_jaccard = len(entities_new & entities_exist) / max(len(entities_new | entities_exist), 1)
+
+        # 根据类别调整权重（示例）
+        if root_category in ['Tech', 'Work']:
+            weights = {'vec': 0.4, 'facts': 0.4, 'entities': 0.2}  # 更重视事实
+        else:
+            weights = {'vec': 0.5, 'facts': 0.3, 'entities': 0.2}  # 默认权重
+
+        total_sim = (weights['vec'] * vec_sim +
+                     weights['facts'] * facts_jaccard +
+                     weights['entities'] * entities_jaccard)
+        return total_sim
+
     def add_memories(self, data_list: List[Dict[str, Any]], dialog_ids_list: Optional[List[List[str]]] = None):
         """
-        添加记忆节点（level=2），并自动去重（基于向量相似度）
+        添加记忆节点（level=2），并自动去重（基于多字段相似度）
         :param data_list: 记忆数据列表
         :param dialog_ids_list: 与 data_list 对应的对话ID列表，长度必须一致
         """
@@ -107,41 +158,58 @@ class TreeMemoryStore:
             dialog_ids_list = [[] for _ in data_list]
         assert len(data_list) == len(dialog_ids_list), "data_list 与 dialog_ids_list 长度必须一致"
 
-        # 相似度阈值
-        SIMILARITY_THRESHOLD = 0.95
+        # 批量编码所有摘要，提高效率
+        summaries = [item.get('summary', '') for item in data_list]
+        new_vectors = embedding_model.encode(summaries).tolist()
 
-        for item, new_dialog_ids in zip(data_list, dialog_ids_list):
+        for idx, (item, new_dialog_ids) in enumerate(zip(data_list, dialog_ids_list)):
             root_cat = item.get('root_category', 'General')
             sub_topic = item.get('sub_topic', 'General')
             title = item.get('title', 'Untitled')
-            summary = item.get('summary', '')
+            summary = summaries[idx]
             facts = item.get('key_facts', [])
             entities = item.get('entities', [])
+            new_vector = new_vectors[idx]
 
-            # 计算新记忆的向量（基于摘要）
-            new_vector = embedding_model.encode(summary).tolist()
+            # 构建用于相似度比较的新记忆字典
+            new_mem_for_sim = {
+                'vector': new_vector,
+                'key_facts': facts,
+                'entities': entities
+            }
 
-            # 在相同 root_category 下搜索最相似的记忆（仅 level=2 的叶子节点）
+            # 在相同 root_category 下搜索候选记忆（level=2）
+            # 先通过向量检索 top 20 候选，减少计算量
             search_result = self.table.search(new_vector) \
                 .where(f"root_category = '{root_cat}' AND level = 2") \
-                .limit(1) \
+                .limit(20) \
                 .to_list()
 
-            if search_result:
-                existing = search_result[0]
-                # 移除 LanceDB 自动添加的元数据字段（如 _distance）
-                existing = {k: v for k, v in existing.items() if not k.startswith('_')}
-                similarity = self._cosine_similarity(new_vector, existing['vector'])
-                if similarity >= SIMILARITY_THRESHOLD:
-                    # 重复记忆：合并 dialog_ids
-                    merged_ids = list(set(existing['dialog_ids'] + new_dialog_ids))
-                    print(f"  🔁 发现重复记忆 [{root_cat}] {title}，合并 dialog_ids（共 {len(merged_ids)} 条）")
-                    # 更新现有记录：删除旧记录，插入新记录
-                    self.table.delete(f"id = '{existing['id']}'")
-                    updated_record = existing.copy()
-                    updated_record['dialog_ids'] = merged_ids
-                    self.table.add([updated_record])
-                    continue
+            # 移除 LanceDB 自动添加的元数据字段（如 _distance）
+            candidates = [{k: v for k, v in c.items() if not k.startswith('_')} for c in search_result]
+
+            best_sim = 0
+            best_existing = None
+            for candidate in candidates:
+                sim = self._calculate_similarity(new_mem_for_sim, candidate, root_category=root_cat)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_existing = candidate
+
+            threshold = self.CATEGORY_THRESHOLDS.get(root_cat, 0.8)
+            if best_existing and best_sim >= threshold:
+                # 合并 dialog_ids
+                merged_ids = list(set(best_existing.get('dialog_ids', []) + new_dialog_ids))
+                print(f"  🔁 发现相似记忆 [{root_cat}] {title}，相似度 {best_sim:.3f}，合并 dialog_ids（共 {len(merged_ids)} 条）")
+                # 删除旧记录，插入更新后的记录
+                self.table.delete(f"id = '{best_existing['id']}'")
+                updated_record = best_existing.copy()
+                updated_record['dialog_ids'] = merged_ids
+                # 可选：合并关键事实和实体（去重）
+                # updated_record['key_facts'] = list(set(best_existing.get('key_facts', []) + facts))
+                # updated_record['entities'] = list(set(best_existing.get('entities', []) + entities))
+                self.table.add([updated_record])
+                continue
 
             # 无重复，正常插入新记忆
             try:
@@ -166,12 +234,6 @@ class TreeMemoryStore:
                 print(f"  ✅ 存入: [{root_cat}] -> {sub_topic} -> {title} (关联 {len(new_dialog_ids)} 条对话)")
             except Exception as e:
                 print(f"  ❌ 存入失败: {item.get('title')} - Error: {e}")
-
-    def _cosine_similarity(self, vec_a, vec_b):
-        """计算余弦相似度"""
-        a = np.array(vec_a)
-        b = np.array(vec_b)
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
     def query_memories(self,
                        root_category: Optional[str] = None,

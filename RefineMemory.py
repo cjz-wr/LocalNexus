@@ -180,7 +180,6 @@ class RefineMemory:
 
         if self.store and memories:
             dialog_ids_list = [dialog_ids for _ in memories] if dialog_ids else None
-            # 同步存储放入线程池
             await asyncio.to_thread(self.store.add_memories, memories, dialog_ids_list)
             print(f"✅ 成功存入 {len(memories)} 条记忆到存储库。")
         else:
@@ -188,46 +187,10 @@ class RefineMemory:
 
         return memories
 
-    # 用于后面的优化（同步方法，可能包含文件操作）
+    # ---------- 修复：移除修改 system 的逻辑，变为空操作 ----------
     def sendPromptToAi(self):
-        if self.frist_creat:
-            system_prompt = '''
-             ## 记忆查询工具
-                    当用户的问题需要参考历史记忆才能准确回答时，你必须输出一个 JSON 格式的查询请求。JSON 必须包含以下字段：
-                    - `action`: 固定为 "query_memory"
-                    - `params`: 对象，包含查询条件，可选字段如下：
-                    - `root_category` (string): 根类别，可选值：Work, Tech, Learning, Health, Finance, Ideas, Life, General
-                    - `keywords` (list of strings): 关键词列表，用于匹配标题、摘要、关键事实
-                    - `entities` (list of strings): 实体列表，如人名、技术名等
-                    - `max_results` (integer): 最多返回几条记忆，默认 3
-
-                    输出格式示例：
-                    {
-                    "action": "query_memory",
-                    "params": {
-                        "root_category": "Tech",
-                        "keywords": ["FastAPI", "JWT"],
-                        "max_results": 2
-                    }
-                    }
-
-                    请将 JSON 包裹在标记 `<query></query>` 中，以便系统识别。例如：
-                    <query>
-                    { "action": "query_memory", "params": { "keywords": ["上次", "问题"] } }
-                    </query>
-
-                    系统会在你输出查询请求后，暂停当前回答，执行查询，并将查询结果以如下格式追加到对话历史中：
-                    【记忆查询结果】
-                    - 记忆1：标题 / 摘要 / 关键事实
-                    - 记忆2：...
-                    然后你可以继续完成回答。
-
-                    注意：如果不需要查询记忆，直接正常回答即可，不要输出查询标记。
-
-            '''
-            with open("ai_memory/chat_history.json", "r",encoding="utf-8") as f:
-                self.ai_memory = json.load(f)
-                self.ai_memory[0]["content"] = self.ai_memory[0]["content"] + system_prompt
+        """原用于向 system 添加工具提示词，现已由 DialogueManager 统一处理，此方法保留为空。"""
+        pass
 
 # 测试函数（如需异步调用，可改为 async def）
 async def main_local():
@@ -254,7 +217,7 @@ async def main_local():
     import uuid
     dialog_ids = [str(uuid.uuid4()) for _ in range(len(raw_messages))]
 
-    cleaner = RefineMemory(raw_messages, store=store, min_chars=3)
+    cleaner = RefineMemory(raw_messages, min_chars=3)
     memories = await cleaner.getFromOpenAI(
         key="sk-32b922c6ed4c479f964e81b8339e56d2",
         model="qwen3-max-2026-01-23",

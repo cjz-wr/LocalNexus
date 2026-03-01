@@ -18,15 +18,21 @@ class AiQuery:
         )
 
     async def handle_memory_query(self, ai_response: str, store: TreeMemoryStore) -> Optional[str]:
-        # pattern = r'<query>(.*?)</query>'
-        pattern = r'<(?:query|\|tool_call_start\|)>(.*?)</(?:query|\|tool_call_end\|)>' #预防一些模型自动输出特定格式
+        ai_response = ai_response.replace("<|tool_call_start|>","<query>").replace("<|tool_call_end|>","</query>")
+        pattern = r'<query>(.*?)</query>'
+        # pattern = r'<(?:query|\|tool_call_start\|)>(.*?)</(?:query|\|tool_call_end\|)>' #预防一些模型自动输出特定格式
         match = re.search(pattern, ai_response, re.DOTALL)
+        # print(match.group(1))
+        
         if not match:
             return None
 
         query_json = match.group(1).strip()
         try:
-            query_data = json.loads(query_json)
+            if type(json.loads(query_json)) == list:
+                query_data = json.loads(query_json)[0]
+            else:
+                query_data = json.loads(query_json)
         except json.JSONDecodeError:
             print("⚠️ 记忆查询 JSON 解析失败")
             return None
@@ -85,6 +91,9 @@ class AiQuery:
         )
         assistant_reply = response.choices[0].message.content
         print(f"[DEBUG] 第二次调用回复内容: {assistant_reply}")
+
+        #删除工具返回的结果
+        self.memory.pop(len(self.memory) - 1)
 
         self.memory[0]["content"] = self.old_system
         self.memory.append({"role": "assistant", "content": assistant_reply})
